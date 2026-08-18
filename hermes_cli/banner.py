@@ -239,8 +239,39 @@ def _is_full_sha(value: Optional[str]) -> bool:
     )
 
 
+def _upstream_main_sha_via_api() -> Optional[str]:
+    """Tip SHA of upstream main via the GitHub REST API (fast, no auth).
+
+    Local patch (CAX31, 2026-08-18): ``git ls-remote https://github.com/...``
+    against this repo intermittently takes >10 s on GitHub's side (huge ref
+    advertisement), which made the dashboard update-check report
+    "Couldn't reach the update source" ~50% of the time and cache that for
+    6 h. api.github.com answers in well under a second, so probe it first
+    and keep ls-remote as the fallback.
+    """
+    url = "https://api.github.com/repos/nousresearch/hermes-agent/commits/main"
+    try:
+        import urllib.request
+
+        req = urllib.request.Request(
+            url,
+            headers={
+                "Accept": "application/vnd.github.sha",
+                "User-Agent": "hermes-cli-update-check",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            sha = resp.read().decode("utf-8").strip()
+    except Exception:
+        return None
+    return sha if _is_full_sha(sha) else None
+
+
 def _upstream_main_sha() -> Optional[str]:
     """Tip SHA of upstream main via HTTPS ls-remote (no auth, no prompts)."""
+    via_api = _upstream_main_sha_via_api()
+    if via_api:
+        return via_api
     try:
         result = subprocess.run(
             ["git", "ls-remote", _UPSTREAM_REPO_URL, "refs/heads/main"],
